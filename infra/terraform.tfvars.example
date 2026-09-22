@@ -1,0 +1,4 @@
+# Copy to terraform.tfvars for local use; the pipeline injects these as TF_VAR_* env vars
+aws_region   = "us-east-1"
+service_name = "hello-service"
+image_tag    = "latest"

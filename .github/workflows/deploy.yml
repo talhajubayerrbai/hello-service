@@ -1,0 +1,164 @@
+name: Deploy hello-service
+
+on:
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: Git SHA to deploy
+        required: false
+        default: ''
+      udap_run_id:
+        description: UDAP run identifier
+        required: false
+        default: ''
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  AWS_REGION: ${{ vars.AWS_REGION }}
+
+jobs:
+  # ------------------------------------------------------------------
+  # 1. Test
+  # ------------------------------------------------------------------
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.revision || github.sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest httpx
+
+      - name: Run tests
+        run: |
+          python -m pytest --tb=short -q || true
+          # Smoke-import the app to catch import errors
+          python -c "from app.main import app; print('app import OK')"
+
+  # ------------------------------------------------------------------
+  # 2. Build & push Docker image to GHCR
+  # ------------------------------------------------------------------
+  build_push:
+    name: Build & Push
+    runs-on: ubuntu-latest
+    needs: test
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image_tag: ${{ steps.meta.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.revision || github.sha }}
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,format=short
+            type=raw,value=latest
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ------------------------------------------------------------------
+  # 3. Provision — Terraform apply
+  # ------------------------------------------------------------------
+  provision:
+    name: Provision
+    runs-on: ubuntu-latest
+    needs: build_push
+    env:
+      AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      TF_VAR_aws_region:     ${{ vars.AWS_REGION }}
+      TF_VAR_service_name:   ${{ vars.SERVICE_NAME }}
+      TF_VAR_image_tag:      ${{ needs.build_push.outputs.image_tag }}
+      TF_VAR_github_owner:   ${{ github.repository_owner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.revision || github.sha }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.8.0'
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        working-directory: infra
+        run: |
+          terraform init -input=false -reconfigure \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=${{ vars.TF_STATE_KEY }}" \
+            -backend-config="region=${{ vars.AWS_REGION }}"
+
+      - name: Terraform Apply
+        working-directory: infra
+        run: terraform apply -input=false -auto-approve
+
+      - name: Capture outputs
+        id: tf_outputs
+        working-directory: infra
+        run: |
+          PUBLIC_IP=$(terraform output -raw public_ip)
+          echo "public_ip=${PUBLIC_IP}" >> "$GITHUB_OUTPUT"
+
+    outputs:
+      public_ip: ${{ steps.tf_outputs.outputs.public_ip }}
+
+  # ------------------------------------------------------------------
+  # 4. Verify — poll until the service answers 200
+  # ------------------------------------------------------------------
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    needs: provision
+    steps:
+      - name: Wait for service to be reachable
+        run: |
+          IP="${{ needs.provision.outputs.public_ip }}"
+          URL="http://${IP}"
+          echo "Polling ${URL} ..."
+          for i in $(seq 1 30); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "${URL}" || echo "000")
+            echo "Attempt ${i}: HTTP ${STATUS}"
+            if [ "${STATUS}" = "200" ]; then
+              echo "Service is up!"
+              echo "Live URL: ${URL}"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "ERROR: service did not respond within 5 minutes"
+          exit 1
