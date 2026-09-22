@@ -1,0 +1,45 @@
+{
+  "edges": [
+    {
+      "from": "ec2",
+      "id": "ec2-s3_state-0",
+      "kind": "uses",
+      "props": {},
+      "to": "s3_state"
+    }
+  ],
+  "groups": [
+    {
+      "id": "udap-dev",
+      "kind": "environment",
+      "name": "udap-dev",
+      "ref": "env_01a076bd51f89be2939a68544be4071e"
+    }
+  ],
+  "nodes": [
+    {
+      "group": "udap-dev",
+      "id": "ec2",
+      "name": "EC2 t3.micro (us-east-1)",
+      "props": {
+        "instance_type": "t3.micro",
+        "region": "us-east-1"
+      },
+      "type": "service.ec2"
+    },
+    {
+      "group": null,
+      "id": "s3_state",
+      "name": "S3 Terraform State",
+      "props": {
+        "name": "udap-tf-state"
+      },
+      "type": "resource.bucket"
+    }
+  ],
+  "scope": {
+    "id": "svc_01a0c8a5225b3a8b3acb19fc4747ce13",
+    "kind": "service"
+  },
+  "version": 1
+}

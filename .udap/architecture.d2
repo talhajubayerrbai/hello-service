@@ -1,0 +1,16 @@
+hello_service: "hello-service" {
+  udap-type: generic.app
+}
+ec2: "EC2 t3.micro (us-east-1)" {
+  udap-type: aws.ec2
+}
+ghcr: "GHCR (ghcr.io)" {
+  udap-type: generic.app
+}
+s3_state: "S3 Terraform State" {
+  udap-type: aws.s3
+}
+
+hello_service -> ec2: serves
+ec2 -> ghcr: uses
+ec2 -> s3_state: uses

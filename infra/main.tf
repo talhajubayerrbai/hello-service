@@ -16,11 +16,28 @@ provider "aws" {
 # ---------------------------------------------------------------------------
 # Variables
 # ---------------------------------------------------------------------------
-variable "aws_region"     { type = string }
-variable "service_name"   { type = string }
-variable "image_tag"      { type = string  default = "latest" }
-variable "instance_type"  { type = string  default = "t3.micro" }
-variable "github_owner"   { type = string  default = "talhajubayerrbai" }
+variable "aws_region" {
+  type = string
+}
+
+variable "service_name" {
+  type = string
+}
+
+variable "image_tag" {
+  type    = string
+  default = "latest"
+}
+
+variable "instance_type" {
+  type    = string
+  default = "t3.micro"
+}
+
+variable "github_owner" {
+  type    = string
+  default = "talhajubayerrbai"
+}
 
 locals {
   image = "ghcr.io/${var.github_owner}/${var.service_name}:${var.image_tag}"
